@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moonstone"
+version = "1.0.0"
+description = "Moonstone: a multimodal foundation model and benchmark for lunar remote sensing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "numpy<2",
+    "rasterio",
+    "h5py",
+    "scipy",
+    "geopandas",
+    "shapely",
+    "pandas",
+    "requests",
+    "tqdm",
+    "matplotlib",
+]
+
+[tool.setuptools]
+py-modules = [
+    "config",
+    "lunar_dataset",
+    "lunar_mae_v2",
+    "downstream_base",
+    "downstream_dataset",
+]

@@ -1,0 +1,11 @@
+torch>=2.0
+numpy<2
+rasterio
+h5py
+scipy
+geopandas
+shapely
+pandas
+requests
+tqdm
+matplotlib
