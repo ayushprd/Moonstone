@@ -23,10 +23,10 @@ from downstream_base import (
 from downstream_dataset import GeologyMmapDataset, AgeMmapDataset
 
 
-def precompute_features(encoder, dataset, device, batch_size=64):
+def precompute_features(encoder, dataset, device, batch_size=64, num_workers=0):
     """Run encoder once over entire dataset, cache features."""
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
-                        num_workers=4, pin_memory=True)
+                        num_workers=num_workers, pin_memory=(num_workers > 0))
     all_feats = []
     all_targets = []
     encoder.eval()
@@ -98,6 +98,8 @@ def evaluate_cached(head, feats, targets, num_classes, device="cuda"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--num-workers", type=int, default=4,
+                        help="DataLoader workers; use 0 in ROCm/Singularity containers.")
     parser.add_argument("--output-dir", default="checkpoints_v2/downstream")
     parser.add_argument("--versions", default="v1,v2",
                         help="comma list of model versions to run (v1,v2). "
@@ -170,11 +172,11 @@ def main():
             encoder, config = load_pretrained_encoder(ckpt_path, device)
             embed_dim = encoder.embed_dim
 
-            sub_feats, sub_targets = precompute_features(encoder, train_sub, device)
+            sub_feats, sub_targets = precompute_features(encoder, train_sub, device, num_workers=args.num_workers)
             print(f"    train-subset features done ({time.time()-t0:.1f}s)")
-            val_feats, val_targets = precompute_features(encoder, val_ds, device)
+            val_feats, val_targets = precompute_features(encoder, val_ds, device, num_workers=args.num_workers)
             print(f"    val features done ({time.time()-t0:.1f}s)")
-            test_feats, test_targets = precompute_features(encoder, test_ds, device)
+            test_feats, test_targets = precompute_features(encoder, test_ds, device, num_workers=args.num_workers)
 
             cached[ckpt_name] = {
                 "sub_feats": sub_feats, "sub_targets": sub_targets,
@@ -247,11 +249,11 @@ def main():
 
             fs_train_ds = Subset(train_ds, fs_idx)
             fs_loader = DataLoader(fs_train_ds, batch_size=min(32, len(fs_idx)),
-                                   shuffle=True, num_workers=2, pin_memory=True, drop_last=False)
+                                   shuffle=True, num_workers=args.num_workers, pin_memory=(args.num_workers > 0), drop_last=False)
             val_loader = DataLoader(val_ds, batch_size=64, shuffle=False,
-                                    num_workers=2, pin_memory=True)
+                                    num_workers=args.num_workers, pin_memory=(args.num_workers > 0))
             test_loader = DataLoader(test_ds, batch_size=64, shuffle=False,
-                                     num_workers=2, pin_memory=True)
+                                     num_workers=args.num_workers, pin_memory=(args.num_workers > 0))
 
             # Quick train
             optimizer = torch.optim.AdamW(scratch_head.parameters(), lr=1e-3, weight_decay=0.01)

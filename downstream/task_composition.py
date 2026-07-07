@@ -68,6 +68,8 @@ def main():
     parser.add_argument("--geo-split", action="store_true")
     parser.add_argument("--output-dir", type=str, default="checkpoints/downstream")
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--num-workers", type=int, default=4,
+                        help="DataLoader workers. Use 0 in ROCm/Singularity containers where forked workers deadlock against the HIP context.")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -78,11 +80,11 @@ def main():
     test_ds = CompositionMmapDataset(h5_path=args.h5_path, mmap_dir=args.mmap_dir, split=2, geo_split=args.geo_split)
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=4, pin_memory=True, drop_last=True)
+                              num_workers=args.num_workers, pin_memory=(args.num_workers > 0), drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=4, pin_memory=True)
+                            num_workers=args.num_workers, pin_memory=(args.num_workers > 0))
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
-                             num_workers=4, pin_memory=True)
+                             num_workers=args.num_workers, pin_memory=(args.num_workers > 0))
 
     encoder = None
     if args.mode in ("linear", "finetune") and args.checkpoint:

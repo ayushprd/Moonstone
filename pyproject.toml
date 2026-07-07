@@ -7,6 +7,7 @@ name = "moonstone"
 version = "1.0.0"
 description = "Moonstone: a multimodal foundation model and benchmark for lunar remote sensing"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0",

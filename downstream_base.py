@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
 
 from config import CHANNELS_V4, MODALITY_GROUPS, MODALITY_GROUP_NAMES
 
@@ -136,6 +136,44 @@ def extract_features(model, pixels, has_group, mode="cls"):
         # preserves spatial grid for SegmentationHead reshape(B, D, 16, 16)
         start, end = group_token_ranges["surface"]
         return encoded[:, start:end]  # (B, 256, D)
+
+
+@torch.no_grad()
+def precompute_features(encoder, loader, device, mode="cls"):
+    """Run the frozen encoder once over a loader and cache (features, targets).
+
+    Returns the cached tensors so the head can train for many epochs without
+    re-encoding, which is the dominant cost for linear probing. Iterates with a
+    single-process loader: forked DataLoader workers deadlock against the HIP/CUDA
+    context in some container setups, and worker parallelism gives little here
+    since the encoder forward dominates.
+    """
+    encoder.eval()
+    loader = DataLoader(loader.dataset, batch_size=loader.batch_size,
+                        shuffle=False, num_workers=0)
+    feats, targets = [], []
+    for batch in loader:
+        pixels = batch["pixels"].to(device, non_blocking=True)
+        has_group = batch["has_group"].to(device, non_blocking=True).bool()
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            f = extract_features(encoder, pixels, has_group, mode=mode)
+        feats.append(f.float().cpu())
+        targets.append(batch["target"])
+    return torch.cat(feats), torch.cat(targets)
+
+
+def _feature_loader(features, targets, batch_size, shuffle):
+    """DataLoader over cached features, yielding the same dict shape as the
+    pixel datasets so the standard loops (which read batch['pixels'] and, when
+    encoder is None, call head(pixels)) run unchanged on cached features."""
+    ds = TensorDataset(features, targets)
+
+    def collate(items):
+        f = torch.stack([it[0] for it in items])
+        t = torch.stack([it[1] for it in items])
+        return {"pixels": f, "target": t}
+
+    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, collate_fn=collate)
 
 
 # =====================================================================
@@ -320,6 +358,18 @@ def train_downstream(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Linear probing: the frozen encoder produces the same features every epoch,
+    # so extract them once and train the head on cached features. Finetuning
+    # (freeze_encoder=False) and segmentation heads keep the per-batch path.
+    if (encoder is not None and freeze_encoder
+            and not isinstance(head, SegmentationHead)):
+        print(f"  [{task_name}] precomputing frozen features...")
+        tr_f, tr_y = precompute_features(encoder, train_loader, device)
+        va_f, va_y = precompute_features(encoder, val_loader, device)
+        train_loader = _feature_loader(tr_f, tr_y, train_loader.batch_size, shuffle=True)
+        val_loader = _feature_loader(va_f, va_y, val_loader.batch_size, shuffle=False)
+        encoder = None  # downstream loops now see cached features as "pixels"
 
     if loss_fn is None:
         # Label smoothing to prevent overconfident predictions and reduce overfitting
